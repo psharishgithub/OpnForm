@@ -3,8 +3,12 @@ services:
   # Main application service - Coolify will route traffic to this
   app:
     image: jhumanj/opnform-client:latest
-    ports:
-      - "3000:3000"
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=application"
+      - "coolify.name=opnform-client"
+    expose:
+      - "3000"
     environment:
       NUXT_PUBLIC_APP_URL: ${APP_URL}
       NUXT_PUBLIC_API_BASE: ${API_BASE_URL:-http://api:80}
@@ -28,8 +32,12 @@ services:
 
   api: &api-environment
     image: jhumanj/opnform-api:latest
-    ports:
-      - "80:80"
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=service"
+      - "coolify.name=opnform-api"
+    expose:
+      - "80"
     volumes: &api-environment-volumes
       - opnform_storage:/usr/share/nginx/html/storage:rw
     environment: &api-env
