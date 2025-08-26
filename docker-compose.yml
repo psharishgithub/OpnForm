@@ -1,76 +1,113 @@
 ---
 services:
+  # Main application service - Coolify will route traffic to this
+  app:
+    image: jhumanj/opnform-client:latest
+    ports:
+      - "3000:3000"
+    environment:
+      NUXT_PUBLIC_APP_URL: ${APP_URL}
+      NUXT_PUBLIC_API_BASE: ${API_BASE_URL:-http://api:80}
+      NUXT_API_SECRET: ${API_SECRET:-secret}
+      NUXT_PUBLIC_ENV: production
+      NUXT_PUBLIC_H_CAPTCHA_SITE_KEY: ${H_CAPTCHA_SITE_KEY}
+      NUXT_PUBLIC_RE_CAPTCHA_SITE_KEY: ${RE_CAPTCHA_SITE_KEY}
+      NUXT_PUBLIC_GOOGLE_ANALYTICS_CODE: ${GOOGLE_ANALYTICS_CODE}
+      NUXT_PUBLIC_CRISP_WEBSITE_ID: ${CRISP_WEBSITE_ID}
+      NUXT_PUBLIC_AMPLITUDE_CODE: ${AMPLITUDE_CODE}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    restart: unless-stopped
+
   api: &api-environment
     image: jhumanj/opnform-api:latest
-    container_name: opnform-api
+    ports:
+      - "80:80"
     volumes: &api-environment-volumes
       - opnform_storage:/usr/share/nginx/html/storage:rw
     environment: &api-env
       APP_ENV: production
+      APP_URL: ${APP_URL}
+      APP_KEY: ${APP_KEY}
+      FRONT_URL: ${APP_URL}
+      FRONT_API_SECRET: ${API_SECRET:-secret}
       # Database settings
       DB_HOST: db
       REDIS_HOST: redis
-      DB_DATABASE: ${DB_DATABASE:-forge}
-      DB_USERNAME: ${DB_USERNAME:-forge}
-      DB_PASSWORD: ${DB_PASSWORD:-forge}
+      DB_DATABASE: ${DB_DATABASE:-opnform}
+      DB_USERNAME: ${DB_USERNAME:-opnform}
+      DB_PASSWORD: ${DB_PASSWORD}
       DB_CONNECTION: ${DB_CONNECTION:-pgsql}
       # PHP Configuration
       PHP_MEMORY_LIMIT: "1G"
       PHP_MAX_EXECUTION_TIME: "600"
       PHP_UPLOAD_MAX_FILESIZE: "64M"
       PHP_POST_MAX_SIZE: "64M"
-    env_file:
-      - ./api/.env
-    # Expose internal port for Traefik (do not publish to host)
-    expose:
-      - "80"
-    # Traefik labels for Coolify (replace hostnames with your domains)
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.opnform-api.rule=Host(`api.opnform.example`)"
-      - "traefik.http.routers.opnform-api.entrypoints=websecure"
-      - "traefik.http.routers.opnform-api.tls=true"
-      - "traefik.http.services.opnform-api.loadbalancer.server.port=80"
-    networks:
-      - coolify
+      # Storage Configuration
+      FILESYSTEM_DRIVER: ${FILESYSTEM_DRIVER:-local}
+      FILESYSTEM_DISK: ${FILESYSTEM_DISK:-local}
+      # Mail Configuration
+      MAIL_MAILER: ${MAIL_MAILER:-smtp}
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_ENCRYPTION: ${MAIL_ENCRYPTION:-tls}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-OpnForm}
+      # Optional services
+      STRIPE_KEY: ${STRIPE_KEY}
+      STRIPE_SECRET: ${STRIPE_SECRET}
+      OPEN_AI_API_KEY: ${OPEN_AI_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      H_CAPTCHA_SITE_KEY: ${H_CAPTCHA_SITE_KEY}
+      H_CAPTCHA_SECRET_KEY: ${H_CAPTCHA_SECRET_KEY}
+      RE_CAPTCHA_SITE_KEY: ${RE_CAPTCHA_SITE_KEY}
+      RE_CAPTCHA_SECRET_KEY: ${RE_CAPTCHA_SECRET_KEY}
+      ADMIN_EMAILS: ${ADMIN_EMAILS}
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_healthy # Depend on redis being healthy too
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "php /usr/share/nginx/html/artisan about || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 3
       start_period: 60s
+    restart: unless-stopped
 
   api-worker:
     <<: *api-environment
-    container_name: opnform-api-worker
-    command: ["php", "artisan", "queue:work"]
+    ports: []
+    command: ["php", "artisan", "queue:work", "--verbose", "--tries=3", "--timeout=90"]
     environment:
       <<: *api-env
       APP_ENV: production
-    networks:
-      - coolify
     healthcheck:
-      test:
-        ["CMD-SHELL", "pgrep -f 'php artisan queue:work' > /dev/null || exit 1"]
+      test: ["CMD-SHELL", "pgrep -f 'php artisan queue:work' > /dev/null || exit 1"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
 
   api-scheduler:
     <<: *api-environment
-    container_name: opnform-api-scheduler
+    ports: []
     command: ["php", "artisan", "schedule:work"]
     environment:
       <<: *api-env
       APP_ENV: production
-    networks:
-      - coolify
     healthcheck:
       test:
         [
@@ -81,63 +118,39 @@ services:
       timeout: 30s
       retries: 3
       start_period: 70s # Allow time for first scheduled run and cache write
-
-  ui:
-    image: jhumanj/opnform-client:latest
-    container_name: opnform-client
-    env_file:
-      - ./client/.env
-    # Expose internal port used by the UI (Coolify/Traefik will route to this)
-    expose:
-      - "3000"
-    # Traefik labels for Coolify (replace hostname with your domain)
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.opnform-client.rule=Host(`opnform.example`)"
-      - "traefik.http.routers.opnform-client.entrypoints=websecure"
-      - "traefik.http.routers.opnform-client.tls=true"
-      - "traefik.http.services.opnform-client.loadbalancer.server.port=3000"
-    networks:
-      - coolify
-    healthcheck:
-      test:
-        ["CMD-SHELL", "wget --spider -q http://localhost:3000/login || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
+    restart: unless-stopped
 
   redis:
-    image: redis:7
-    container_name: opnform-redis
+    image: redis:7-alpine
     volumes:
       - redis-data:/data
+    command: redis-server --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
       interval: 30s
       timeout: 5s
+      retries: 3
+    restart: unless-stopped
 
   db:
-    image: postgres:16
-    container_name: opnform-db
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-forge}
-      POSTGRES_USER: ${DB_USERNAME:-forge}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-forge}
+      POSTGRES_DB: ${DB_DATABASE:-opnform}
+      POSTGRES_USER: ${DB_USERNAME:-opnform}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-forge}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-opnform}"]
       interval: 30s
       timeout: 5s
+      retries: 3
     volumes:
       - postgres-data:/var/lib/postgresql/data
-
-  # ingress service intentionally removed: Coolify provides Traefik for routing/TLS
+    restart: unless-stopped
 
 volumes:
   postgres-data:
   opnform_storage:
   redis-data:
-
-networks:
-  coolify:
-    external: true
