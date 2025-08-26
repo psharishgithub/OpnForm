@@ -1,130 +1,6 @@
+version: '3.8'
+
 services:
-  api: &api-environment
-    image: jhumanj/opnform-api:latest
-    container_name: opnform-api
-    volumes: &api-environment-volumes
-      - opnform_storage:/usr/share/nginx/html/storage:rw
-    environment: &api-env
-      APP_ENV: production
-      # Database settings
-      DB_HOST: db
-      REDIS_HOST: redis
-      DB_DATABASE: ${DB_DATABASE:-opnform}
-      DB_USERNAME: ${DB_USERNAME:-opnform}
-      DB_PASSWORD: ${DB_PASSWORD:-your_secure_password}
-      DB_CONNECTION: ${DB_CONNECTION:-pgsql}
-      # PHP Configuration
-      PHP_MEMORY_LIMIT: "1G"
-      PHP_MAX_EXECUTION_TIME: "600"
-      PHP_UPLOAD_MAX_FILESIZE: "64M"
-      PHP_POST_MAX_SIZE: "64M"
-      # IP-based configuration
-      APP_URL: ${APP_URL:-http://localhost:8080}
-      API_DOMAIN: ${API_DOMAIN:-localhost:8080}
-      # Trust proxy for IP access
-      TRUSTED_PROXIES: "*"
-      # Allow all origins for IP access
-      CORS_ALLOWED_ORIGINS: "*"
-    env_file:
-      - ./api/.env
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "php /usr/share/nginx/html/artisan about || exit 1"]
-      interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 60s
-    networks:
-      - opnform-network
-
-  api-worker:
-    <<: *api-environment
-    container_name: opnform-api-worker
-    command: ["php", "artisan", "queue:work"]
-    environment:
-      <<: *api-env
-      APP_ENV: production
-    healthcheck:
-      test:
-        ["CMD-SHELL", "pgrep -f 'php artisan queue:work' > /dev/null || exit 1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    networks:
-      - opnform-network
-
-  api-scheduler:
-    <<: *api-environment
-    container_name: opnform-api-scheduler
-    command: ["php", "artisan", "schedule:work"]
-    environment:
-      <<: *api-env
-      APP_ENV: production
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "php /usr/share/nginx/html/artisan app:scheduler-status --mode=check --max-minutes=3 || exit 1",
-        ]
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 70s
-    networks:
-      - opnform-network
-
-  ui:
-    image: jhumanj/opnform-client:latest
-    container_name: opnform-client
-    environment:
-      # Frontend configuration for IP access
-      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8080/api}
-      NUXT_PUBLIC_APP_URL: ${NUXT_PUBLIC_APP_URL:-http://localhost:8080}
-      # Disable host checking for IP access
-      NUXT_HOST: "0.0.0.0"
-      NUXT_PORT: "3000"
-    env_file:
-      - ./client/.env
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        ["CMD-SHELL", "wget --spider -q http://localhost:3000/login || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
-    # For Coolify to pick up
-    expose:
-      - "3000"
-    networks:
-      - opnform-network
-    labels:
-      - "coolify.managed=true"
-      - "coolify.type=application"
-      - "coolify.name=opnform-ui"
-      # Add IP access labels
-      - "traefik.enable=true"
-      - "traefik.http.routers.opnform.rule=PathPrefix(`/`)"
-
-  redis:
-    image: redis:7
-    container_name: opnform-redis
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
-      interval: 30s
-      timeout: 5s
-    networks:
-      - opnform-network
-
   db:
     image: postgres:16
     container_name: opnform-db
@@ -136,16 +12,188 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-opnform}"]
       interval: 30s
       timeout: 5s
+      retries: 5
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     networks:
-      - opnform-network
+      - opnform_network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: opnform-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opnform_network
+    restart: unless-stopped
+
+  api:
+    image: jhumanj/opnform-api:latest
+    container_name: opnform-api
+    environment:
+      APP_ENV: production
+      APP_DEBUG: false
+      # Database settings
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_CONNECTION: pgsql
+      DB_DATABASE: ${DB_DATABASE:-opnform}
+      DB_USERNAME: ${DB_USERNAME:-opnform}
+      DB_PASSWORD: ${DB_PASSWORD:-your_secure_password}
+      # Redis settings
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: null
+      # App settings for IP access
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_KEY: ${APP_KEY:-base64:your_app_key_here}
+      # PHP Configuration
+      PHP_MEMORY_LIMIT: "1G"
+      PHP_MAX_EXECUTION_TIME: "600"
+      PHP_UPLOAD_MAX_FILESIZE: "64M"
+      PHP_POST_MAX_SIZE: "64M"
+      # Trust proxy for IP access
+      TRUSTED_PROXIES: "*"
+      # CORS for IP access
+      CORS_ALLOWED_ORIGINS: "*"
+      # Queue and cache
+      QUEUE_CONNECTION: redis
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      SESSION_LIFETIME: 120
+      # Mail (optional - use mailhog for testing)
+      MAIL_MAILER: log
+      MAIL_FROM_ADDRESS: "noreply@localhost"
+      MAIL_FROM_NAME: "OpnForm"
+    volumes:
+      - app_storage:/usr/share/nginx/html/storage
+      - app_bootstrap:/usr/share/nginx/html/bootstrap/cache
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/api/health || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    networks:
+      - opnform_network
+    restart: unless-stopped
+
+  api-worker:
+    image: jhumanj/opnform-api:latest
+    container_name: opnform-api-worker
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--max-time=3600"]
+    environment:
+      APP_ENV: production
+      APP_DEBUG: false
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_CONNECTION: pgsql
+      DB_DATABASE: ${DB_DATABASE:-opnform}
+      DB_USERNAME: ${DB_USERNAME:-opnform}
+      DB_PASSWORD: ${DB_PASSWORD:-your_secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      CACHE_DRIVER: redis
+      APP_KEY: ${APP_KEY:-base64:your_app_key_here}
+    volumes:
+      - app_storage:/usr/share/nginx/html/storage
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'php artisan queue:work' > /dev/null || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - opnform_network
+    restart: unless-stopped
+
+  api-scheduler:
+    image: jhumanj/opnform-api:latest
+    container_name: opnform-api-scheduler
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      APP_ENV: production
+      APP_DEBUG: false
+      DB_HOST: db
+      DB_CONNECTION: pgsql
+      DB_DATABASE: ${DB_DATABASE:-opnform}
+      DB_USERNAME: ${DB_USERNAME:-opnform}
+      DB_PASSWORD: ${DB_PASSWORD:-your_secure_password}
+      REDIS_HOST: redis
+      QUEUE_CONNECTION: redis
+      CACHE_DRIVER: redis
+      APP_KEY: ${APP_KEY:-base64:your_app_key_here}
+    volumes:
+      - app_storage:/usr/share/nginx/html/storage
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php /usr/share/nginx/html/artisan about || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 70s
+    networks:
+      - opnform_network
+    restart: unless-stopped
+
+  ui:
+    image: jhumanj/opnform-client:latest
+    container_name: opnform-client
+    environment:
+      # Frontend configuration for IP access
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8080/api}
+      NUXT_PUBLIC_APP_URL: ${NUXT_PUBLIC_APP_URL:-http://localhost:8080}
+      # Nuxt server config
+      NUXT_HOST: "0.0.0.0"
+      NUXT_PORT: "3000"
+      # Disable strict host checking for IP access
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    expose:
+      - "3000"
+    networks:
+      - opnform_network
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=application"
+      - "coolify.name=opnform-ui"
+    restart: unless-stopped
 
 volumes:
-  postgres-data:
-  opnform_storage:
-  redis-data:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_storage:
+    driver: local
+  app_bootstrap:
+    driver: local
 
 networks:
-  opnform-network:
+  opnform_network:
     driver: bridge
