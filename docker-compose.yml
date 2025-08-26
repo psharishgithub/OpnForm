@@ -21,6 +21,18 @@ services:
       PHP_POST_MAX_SIZE: "64M"
     env_file:
       - ./api/.env
+    # Expose internal port for Traefik (do not publish to host)
+    expose:
+      - "80"
+    # Traefik labels for Coolify (replace hostnames with your domains)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.opnform-api.rule=Host(`api.opnform.example`)"
+      - "traefik.http.routers.opnform-api.entrypoints=websecure"
+      - "traefik.http.routers.opnform-api.tls=true"
+      - "traefik.http.services.opnform-api.loadbalancer.server.port=80"
+    networks:
+      - coolify
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +52,8 @@ services:
     environment:
       <<: *api-env
       APP_ENV: production
+    networks:
+      - coolify
     healthcheck:
       test:
         ["CMD-SHELL", "pgrep -f 'php artisan queue:work' > /dev/null || exit 1"]
@@ -55,6 +69,8 @@ services:
     environment:
       <<: *api-env
       APP_ENV: production
+    networks:
+      - coolify
     healthcheck:
       test:
         [
@@ -71,6 +87,18 @@ services:
     container_name: opnform-client
     env_file:
       - ./client/.env
+    # Expose internal port used by the UI (Coolify/Traefik will route to this)
+    expose:
+      - "3000"
+    # Traefik labels for Coolify (replace hostname with your domain)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.opnform-client.rule=Host(`opnform.example`)"
+      - "traefik.http.routers.opnform-client.entrypoints=websecure"
+      - "traefik.http.routers.opnform-client.tls=true"
+      - "traefik.http.services.opnform-client.loadbalancer.server.port=3000"
+    networks:
+      - coolify
     healthcheck:
       test:
         ["CMD-SHELL", "wget --spider -q http://localhost:3000/login || exit 1"]
@@ -103,28 +131,13 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  ingress:
-    image: nginx:1
-    container_name: opnform-ingress
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/templates/default.conf.template
-    ports:
-      - 4000:80
-    environment:
-      - NGINX_MAX_BODY_SIZE=64m
-    depends_on:
-      api:
-        condition: service_started
-      ui:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "nginx -t && curl -f http://localhost/ || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+  # ingress service intentionally removed: Coolify provides Traefik for routing/TLS
 
 volumes:
   postgres-data:
   opnform_storage:
   redis-data:
+
+networks:
+  coolify:
+    external: true
