@@ -7,6 +7,8 @@ services:
       - "coolify.managed=true"
       - "coolify.type=application"
       - "coolify.name=opnform-client"
+    ports:
+      - "3000:3000"
     expose:
       - "3000"
     environment:
@@ -36,6 +38,8 @@ services:
       - "coolify.managed=true"
       - "coolify.type=service"
       - "coolify.name=opnform-api"
+    ports:
+      - "8080:80"
     expose:
       - "80"
     volumes: &api-environment-volumes
