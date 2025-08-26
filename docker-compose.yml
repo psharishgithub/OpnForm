@@ -88,7 +88,6 @@ services:
 
   api-worker:
     <<: *api-environment
-    ports: []
     command: ["php", "artisan", "queue:work", "--verbose", "--tries=3", "--timeout=90"]
     environment:
       <<: *api-env
@@ -103,7 +102,6 @@ services:
 
   api-scheduler:
     <<: *api-environment
-    ports: []
     command: ["php", "artisan", "schedule:work"]
     environment:
       <<: *api-env
